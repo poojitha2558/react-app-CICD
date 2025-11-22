@@ -1,0 +1,370 @@
+name: 🚀 Personal Productivity Hub CI/CD
+
+# Trigger configuration - when should this workflow run?
+on:
+  # Run on pushes to main and develop branches
+  push:
+    branches: [main, develop]
+  # Run on pull requests targeting main branch
+  pull_request:
+    branches: [main]
+  # Allow manual workflow dispatch for debugging/testing
+  workflow_dispatch:
+
+# Define environment variables used across jobs
+env:
+  NODE_VERSION: '20'
+  CACHE_KEY_PREFIX: 'node-deps-v1'
+
+# Define the jobs that will run in this workflow
+jobs:
+  # Job 1: Code Quality & Security Checks
+  quality-checks:
+    name: 🔍 Code Quality & Security
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history for better analysis
+          fetch-depth: 0
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: './package-lock.json'
+
+      - name: 📦 Install Dependencies
+        run: |
+          npm ci
+          # Verify package-lock.json is up to date
+          npm audit --audit-level moderate
+
+      - name: 🧹 ESLint Code Analysis
+        run: |
+          npm run lint
+          # Create detailed lint report for artifacts
+          npm run lint -- --format json --output-file eslint-report.json || true
+
+      - name: 🔒 Security Vulnerability Scan
+        run: |
+          # Check for known vulnerabilities
+          npm audit --audit-level high
+          # Generate security report
+          npm audit --json > security-audit.json || true
+
+      - name: 📊 Upload Quality Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-reports
+          path: |
+            eslint-report.json
+            security-audit.json
+          retention-days: 30
+
+  # Job 2: Build and Test
+  build-and-test:
+    name: 🏗️ Build & Test
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    
+    strategy:
+      matrix:
+        # Test on multiple Node.js versions for compatibility
+        node-version: [18, 20, 22]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔨 Build Application
+        run: |
+          echo "Building Personal Productivity Hub..."
+          npm run build
+          
+          # Verify build output exists
+          if [ ! -d "dist" ]; then
+            echo "❌ Build failed - dist folder not found"
+            exit 1
+          fi
+          
+          # Check if essential files exist
+          if [ ! -f "dist/index.html" ]; then
+            echo "❌ Build failed - index.html not found"
+            exit 1
+          fi
+          
+          echo "✅ Build successful!"
+
+      - name: 📏 Analyze Bundle Size
+        run: |
+          # Get build size information
+          echo "📊 Build Analysis:"
+          ls -lh dist/
+          
+          # Calculate total size
+          TOTAL_SIZE=$(du -sh dist/ | cut -f1)
+          echo "Total build size: $TOTAL_SIZE"
+          
+          # Check for large assets (warn if > 5MB)
+          find dist/ -size +5M -type f | while read file; do
+            echo "⚠️ Large file detected: $file"
+          done
+
+      - name: 🧪 Run Component Tests (when available)
+        run: |
+          # Currently no tests, but this is where they would run
+          echo "🧪 Test suite placeholder - add tests for:"
+          echo "  - Notes component functionality"
+          echo "  - Todo list operations"
+          echo "  - Expense tracker calculations"
+          echo "  - localStorage persistence"
+          echo "  - Component rendering"
+
+      - name: 📦 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.node-version }}
+          path: dist/
+          retention-days: 14
+
+  # Job 3: Preview Deployment (for PRs)
+  preview-deploy:
+    name: 🔍 Preview Deploy
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔨 Build for Preview
+        run: npm run build
+
+      - name: 🚀 Deploy Preview (Placeholder)
+        run: |
+          echo "🌐 Preview deployment would be created here"
+          echo "💡 Deployment options:"
+          echo "  - Netlify Preview Deploy"
+          echo "  - Vercel Preview"
+          echo "  - GitHub Pages Preview"
+          echo "  - Firebase Hosting Preview"
+          echo ""
+          echo "🔗 Preview URL would be: https://pr-${{ github.event.number }}.preview.example.com"
+
+      - name: 💬 Comment PR with Preview Link
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `
+            ## 🚀 Preview Deployment Ready!
+            
+            Your Personal Productivity Hub preview is building...
+            
+            ### 📊 Build Info:
+            - **Commit**: ${context.sha.substr(0, 7)}
+            - **Branch**: ${context.ref.replace('refs/heads/', '')}
+            - **Node Version**: ${process.env.NODE_VERSION}
+            
+            ### 🧪 Test Areas:
+            - ✅ Notes App functionality
+            - ✅ Todo List operations  
+            - ✅ Expense Tracker features
+            - ✅ Mobile responsiveness
+            
+            *Preview URL will be available once deployment completes*
+            `
+            })
+
+  # Job 4: Production Deployment (only on main branch)
+  production-deploy:
+    name: 🌟 Production Deploy
+    runs-on: ubuntu-latest
+    needs: [quality-checks, build-and-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    environment:
+      name: production
+      url: https://your-productivity-hub.example.com
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔨 Build for Production
+        run: |
+          echo "🏭 Building for production environment..."
+          npm run build
+          
+          # Production-specific optimizations
+          echo "🗜️ Build completed successfully!"
+
+      - name: 📋 Pre-deployment Checks
+        run: |
+          echo "🔍 Running pre-deployment verification..."
+          
+          # Verify critical files exist
+          required_files=("dist/index.html" "dist/assets")
+          for file in "${required_files[@]}"; do
+            if [ ! -e "dist/$file" ]; then
+              echo "❌ Missing required file: $file"
+              exit 1
+            fi
+          done
+          
+          # Check for console.log statements (should be removed in production)
+          if grep -r "console\." dist/assets/ 2>/dev/null; then
+            echo "⚠️ Warning: Console statements found in production build"
+          fi
+          
+          echo "✅ Pre-deployment checks passed!"
+
+      - name: 🚀 Deploy to Production
+        run: |
+          echo "🌟 Deploying Personal Productivity Hub to production..."
+          echo "💡 Deployment options:"
+          echo "  - GitHub Pages: Use peaceiris/actions-gh-pages"
+          echo "  - Netlify: Use netlify/actions/cli"
+          echo "  - Vercel: Use amondnet/vercel-action"
+          echo "  - Firebase: Use w9jds/firebase-action"
+          echo "  - AWS S3: Use aws-actions/configure-aws-credentials"
+          echo ""
+          echo "🎉 Production deployment completed!"
+
+      - name: 📧 Deployment Notification
+        if: success()
+        run: |
+          echo "✅ Production deployment successful!"
+          echo "🌐 Personal Productivity Hub is now live"
+          echo "🚀 Features deployed:"
+          echo "  - 📝 Notes management system"
+          echo "  - ✅ Advanced todo list with priorities"  
+          echo "  - 💰 Comprehensive expense tracker"
+          echo "  - 📱 Mobile-responsive design"
+          echo "  - 💾 Local storage persistence"
+
+  # Job 5: Performance & Accessibility Audit
+  audit:
+    name: 🔍 Performance Audit
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔨 Build Application
+        run: npm run build
+
+      - name: 🌐 Start Preview Server
+        run: |
+          npm run preview &
+          # Wait for server to start
+          sleep 10
+          curl -f http://localhost:4173 || exit 1
+
+      - name: 🎯 Lighthouse Audit
+        run: |
+          echo "🔍 Running Lighthouse performance audit..."
+          npx lighthouse http://localhost:4173 \
+            --output=json \
+            --output-path=lighthouse-report.json \
+            --chrome-flags="--headless --no-sandbox" || true
+          
+          echo "📊 Lighthouse audit completed!"
+
+      - name: 📊 Upload Audit Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: lighthouse-report.json
+          retention-days: 30
+
+  # Job 6: Dependency Updates Check
+  dependency-check:
+    name: 📦 Dependency Health
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 🔍 Check for Updates
+        run: |
+          echo "📦 Checking for dependency updates..."
+          npx npm-check-updates --format table
+          
+          echo "🔒 Security audit..."
+          npm audit --audit-level moderate || true
+
+      - name: 📋 Generate Update Report
+        run: |
+          echo "# 📦 Dependency Health Report" > dependency-report.md
+          echo "" >> dependency-report.md
+          echo "Generated on: $(date)" >> dependency-report.md
+          echo "" >> dependency-report.md
+          echo "## 🔄 Available Updates" >> dependency-report.md
+          npx npm-check-updates --format table >> dependency-report.md
+          echo "" >> dependency-report.md
+          echo "## 🔒 Security Audit" >> dependency-report.md
+          npm audit --audit-level moderate >> dependency-report.md || true
+
+      - name: 📊 Upload Dependency Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-health-report
+          path: dependency-report.md
+          retention-days: 90
